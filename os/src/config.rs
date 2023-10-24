@@ -7,7 +7,7 @@ pub const USER_STACK_SIZE: usize = 4096;
 /// kernel stack size
 pub const KERNEL_STACK_SIZE: usize = 4096 * 2;
 /// kernel heap size
-pub const KERNEL_HEAP_SIZE: usize = 0x20000;
+pub const KERNEL_HEAP_SIZE: usize = 0x80000;
 /// the max number of apps
 pub const MAX_APP_NUM: usize = 16;
 /// base_addr(changed) of app
