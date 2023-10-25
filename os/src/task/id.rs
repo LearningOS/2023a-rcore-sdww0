@@ -80,7 +80,7 @@ pub fn kstack_alloc() -> KernelStack {
         kstack_bottom.into(),
         kstack_top.into(),
         MapPermission::R | MapPermission::W,
-    );
+    ).unwrap();
     KernelStack(kstack_id)
 }
 

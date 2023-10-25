@@ -1,13 +1,14 @@
 //! Types related to task management & Functions for completely changing TCB
 use super::TaskContext;
 use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
-use crate::config::TRAP_CONTEXT_BASE;
+use crate::config::{MAX_SYSCALL_NUM, TRAP_CONTEXT_BASE};
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use core::sync::atomic::{AtomicI32, Ordering, AtomicIsize};
 
 /// Task control block structure
 ///
@@ -19,6 +20,8 @@ pub struct TaskControlBlock {
 
     /// Kernel stack corresponding to PID
     pub kernel_stack: KernelStack,
+
+    pub priority: AtomicIsize,
 
     /// Mutable
     inner: UPSafeCell<TaskControlBlockInner>,
@@ -33,6 +36,27 @@ impl TaskControlBlock {
     pub fn get_user_token(&self) -> usize {
         let inner = self.inner_exclusive_access();
         inner.memory_set.token()
+    }
+}
+
+impl PartialEq for TaskControlBlock {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority.load(Ordering::Relaxed) == other.priority.load(Ordering::Relaxed)
+    }
+}
+impl Eq for TaskControlBlock {}
+
+impl PartialOrd for TaskControlBlock {
+    fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+        self.priority.load(Ordering::Relaxed)
+            .partial_cmp(&other.priority.load(Ordering::Relaxed))
+    }
+}
+
+impl Ord for TaskControlBlock {
+    fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+        self.priority.load(Ordering::Relaxed)
+            .cmp(&other.priority.load(Ordering::Relaxed))
     }
 }
 
@@ -68,6 +92,10 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    pub syscall_times: [u32; MAX_SYSCALL_NUM],
+
+    pub start_running_time: usize,
 }
 
 impl TaskControlBlockInner {
@@ -118,8 +146,11 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_running_time: 0,
                 })
             },
+            priority: AtomicIsize::new(0),
         };
         // prepare TrapContext in user space
         let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
@@ -191,8 +222,11 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    syscall_times: [0; MAX_SYSCALL_NUM],
+                    start_running_time: 0,
                 })
             },
+            priority: AtomicIsize::new(0),
         });
         // add child
         parent_inner.children.push(task_control_block.clone());
