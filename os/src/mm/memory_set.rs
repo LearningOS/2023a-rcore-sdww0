@@ -60,11 +60,77 @@ impl MemorySet {
         start_va: VirtAddr,
         end_va: VirtAddr,
         permission: MapPermission,
-    ) {
+    ) -> Result<(), ()> {
+        if start_va > end_va {
+            return Err(());
+        }
+        for area in self.areas.iter() {
+            let start = area.vpn_range.get_start().0 << 12;
+            let end = area.vpn_range.get_end().0 << 12;
+            if !(start_va.0 >= end || end_va.0 <= start) {
+                return Err(());
+            }
+        }
         self.push(
             MapArea::new(start_va, end_va, MapType::Framed, permission),
             None,
         );
+        Ok(())
+    }
+
+    pub fn unmap(&mut self, start_va: usize, len: usize) -> Result<(), ()> {
+        let start_vpn = VirtAddr(start_va).floor();
+        let end_vpn = VirtAddr(start_va + len).ceil();
+        let mut unmapped = Vec::with_capacity(end_vpn.0 - start_vpn.0);
+        for _ in 0..(end_vpn.0 - start_vpn.0) {
+            unmapped.push(false);
+        }
+        let mut unmap_areas = Vec::new();
+        for area in self.areas.iter_mut() {
+            let area_start_vpn = area.vpn_range.get_start();
+            let area_end_vpn = area.vpn_range.get_end();
+            if start_vpn <= area_start_vpn && end_vpn >= area_end_vpn {
+                // all contains, do unmap
+                for i in area_start_vpn.0..area_end_vpn.0 {
+                    unmapped[i - start_vpn.0] = true
+                }
+            } else if start_vpn <= area_start_vpn && area_start_vpn < end_vpn {
+                for i in area_start_vpn.0..end_vpn.0 {
+                    unmapped[i - start_vpn.0] = true
+                }
+            } else if start_vpn < area_end_vpn && area_end_vpn <= end_vpn {
+                for i in start_vpn.0..area_end_vpn.0 {
+                    unmapped[i - start_vpn.0] = true
+                }
+            }
+        }
+        for i in unmapped.iter() {
+            if !i {
+                return Err(());
+            }
+        }
+        for (index, area) in self.areas.iter_mut().enumerate() {
+            let area_start_vpn = area.vpn_range.get_start();
+            let area_end_vpn = area.vpn_range.get_end();
+            if start_vpn <= area_start_vpn && end_vpn >= area_end_vpn {
+                // all contains, do unmap
+                area.unmap(&mut self.page_table);
+                unmap_areas.push(index);
+            } else if start_vpn <= area_start_vpn && area_start_vpn < end_vpn {
+                let mut new_start = end_vpn;
+                new_start.step();
+                area.shrink_to_start(&mut self.page_table, new_start);
+            } else if start_vpn < area_end_vpn && area_end_vpn <= end_vpn {
+                let mut new_end = start_vpn;
+                new_end.0 -= 1;
+                area.shrink_to(&mut self.page_table, new_end);
+            }
+        }
+        unmap_areas.reverse();
+        for unmap_area in unmap_areas.iter() {
+            self.areas.remove(*unmap_area);
+        }
+        Ok(())
     }
     /// remove a area
     pub fn remove_area_with_start_vpn(&mut self, start_vpn: VirtPageNum) {
@@ -388,6 +454,13 @@ impl MapArea {
             self.unmap_one(page_table, vpn)
         }
         self.vpn_range = VPNRange::new(self.vpn_range.get_start(), new_end);
+    }
+    #[allow(unused)]
+    pub fn shrink_to_start(&mut self, page_table: &mut PageTable, new_start: VirtPageNum) {
+        for vpn in VPNRange::new(self.vpn_range.get_start(), new_start) {
+            self.unmap_one(page_table, vpn)
+        }
+        self.vpn_range = VPNRange::new(new_start, self.vpn_range.get_end());
     }
     #[allow(unused)]
     pub fn append_to(&mut self, page_table: &mut PageTable, new_end: VirtPageNum) {
