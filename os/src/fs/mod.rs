@@ -16,6 +16,8 @@ pub trait File: Send + Sync {
     fn read(&self, buf: UserBuffer) -> usize;
     /// write to the file from buf, return the number of bytes written
     fn write(&self, buf: UserBuffer) -> usize;
+    /// Get file status
+    fn state(&self) -> Option<Stat>;
 }
 
 /// The stat of a inode
@@ -47,6 +49,16 @@ bitflags! {
     }
 }
 
-pub use inode::{list_apps, open_file, OSInode, OpenFlags};
+impl From<DiskInodeType> for StatMode {
+    fn from(value: DiskInodeType) -> Self {
+        match value {
+            DiskInodeType::File => Self::FILE,
+            DiskInodeType::Directory => Self::DIR,
+        }
+    }
+}
+
+use easy_fs::DiskInodeType;
+pub use inode::{list_apps, open_file, OSInode, OpenFlags, ROOT_INODE};
 pub use pipe::{make_pipe, Pipe};
 pub use stdio::{Stdin, Stdout};

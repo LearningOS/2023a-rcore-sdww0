@@ -78,7 +78,7 @@ impl SuperBlock {
 }
 
 /// Inode Type of easy-fs
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum DiskInodeType {
     /// File type
     File,
@@ -94,6 +94,8 @@ type DataBlock = [u8; BLOCK_SZ];
 pub struct DiskInode {
     /// file size
     pub size: u32,
+    /// hard link
+    pub links_count: u32,
     /// array of direct block id
     pub direct: [u32; INODE_DIRECT_COUNT],
     /// one-level indirect block id
@@ -101,13 +103,14 @@ pub struct DiskInode {
     /// two-level indirect block id
     pub indirect2: u32,
     /// inode type
-    type_: DiskInodeType,
+    pub type_: DiskInodeType,
 }
 
 impl DiskInode {
     /// indirect1 and indirect2 block are allocated only when they are needed.
     pub fn initialize(&mut self, type_: DiskInodeType) {
         self.size = 0;
+        self.links_count = 1;
         self.direct.iter_mut().for_each(|v| *v = 0);
         self.indirect1 = 0;
         self.indirect2 = 0;

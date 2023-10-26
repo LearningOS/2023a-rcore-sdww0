@@ -111,10 +111,11 @@ use process::*;
 use sync::*;
 use thread::*;
 
-use crate::fs::Stat;
+use crate::{fs::Stat, task::current_process};
 
 /// handle syscall exception with `syscall_id` and other arguments
 pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
+    update_syscall(syscall_id);
     match syscall_id {
         SYSCALL_DUP => sys_dup(args[0]),
         SYSCALL_LINKAT => sys_linkat(args[1] as *const u8, args[3] as *const u8),
@@ -154,4 +155,11 @@ pub fn syscall(syscall_id: usize, args: [usize; 4]) -> isize {
         SYSCALL_KILL => sys_kill(args[0], args[1] as u32),
         _ => panic!("Unsupported syscall_id: {}", syscall_id),
     }
+}
+
+/// update syscall times
+pub fn update_syscall(syscall_num: usize) {
+    let current_process = current_process();
+    let mut pcb = current_process.inner_exclusive_access();
+    pcb.syscall_times[syscall_num] += 1;
 }

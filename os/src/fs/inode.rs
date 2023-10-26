@@ -156,4 +156,15 @@ impl File for OSInode {
         }
         total_write_size
     }
+    
+    fn state(&self) -> Option<super::Stat> {
+        let lock = self.inner.exclusive_access();
+        Some(super::Stat {
+            dev: 0,
+            ino: lock.inode.block_id() as u64,
+            mode: lock.inode.file_type().into(),
+            nlink: lock.inode.link() as u32,
+            pad: [0; 7],
+        })
+    }
 }

@@ -8,6 +8,7 @@ use super::__switch;
 use super::{fetch_task, TaskStatus};
 use super::{ProcessControlBlock, TaskContext, TaskControlBlock};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_us;
 use crate::trap::TrapContext;
 use alloc::sync::Arc;
 use lazy_static::*;
@@ -55,10 +56,21 @@ pub fn run_tasks() {
         let mut processor = PROCESSOR.exclusive_access();
         if let Some(task) = fetch_task() {
             let idle_task_cx_ptr = processor.get_idle_task_cx_ptr();
+            match task.process.upgrade(){
+                Some(process) => {
+                    let mut pcb = process.inner_exclusive_access(); 
+                    if pcb.start_running_time != 0 {
+                        pcb.start_running_time = get_time_us();
+                    }
+                },
+                None => {},
+            }
+
             // access coming task TCB exclusively
             let mut task_inner = task.inner_exclusive_access();
             let next_task_cx_ptr = &task_inner.task_cx as *const TaskContext;
             task_inner.task_status = TaskStatus::Running;
+
             // release coming task_inner manually
             drop(task_inner);
             // release coming task TCB manually

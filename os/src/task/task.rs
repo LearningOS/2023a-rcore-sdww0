@@ -2,10 +2,12 @@
 
 use super::id::TaskUserRes;
 use super::{kstack_alloc, KernelStack, ProcessControlBlock, TaskContext};
+use crate::config::MAX_SYSCALL_NUM;
 use crate::trap::TrapContext;
 use crate::{mm::PhysPageNum, sync::UPSafeCell};
 use alloc::sync::{Arc, Weak};
 use core::cell::RefMut;
+use core::sync::atomic::AtomicIsize;
 
 /// Task control block structure
 pub struct TaskControlBlock {
@@ -13,6 +15,9 @@ pub struct TaskControlBlock {
     pub process: Weak<ProcessControlBlock>,
     /// Kernel stack corresponding to PID
     pub kstack: KernelStack,
+    
+    pub priority: AtomicIsize,
+
     /// mutable
     inner: UPSafeCell<TaskControlBlockInner>,
 }
@@ -77,6 +82,7 @@ impl TaskControlBlock {
                     exit_code: None,
                 })
             },
+            priority: AtomicIsize::new(0),
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::sync::{Condvar, Mutex, MutexBlocking, MutexSpin, Semaphore};
-use crate::task::{block_current_and_run_next, current_process, current_task};
+use crate::task::{block_current_and_run_next, current_process, current_task, exit_current_and_run_next};
 use crate::timer::{add_timer, get_time_ms};
 use alloc::sync::Arc;
 /// sleep syscall
@@ -71,8 +71,14 @@ pub fn sys_mutex_lock(mutex_id: usize) -> isize {
     let process = current_process();
     let process_inner = process.inner_exclusive_access();
     let mutex = Arc::clone(process_inner.mutex_list[mutex_id].as_ref().unwrap());
+    let is_enabled_detection = process_inner.enable_deadlock_detection;
     drop(process_inner);
     drop(process);
+    if is_enabled_detection{
+        if mutex.is_locked(){
+            return -0xdead;
+        }
+    }
     mutex.lock();
     0
 }
@@ -164,9 +170,49 @@ pub fn sys_semaphore_down(sem_id: usize) -> isize {
     );
     let process = current_process();
     let process_inner = process.inner_exclusive_access();
-    let sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
+    let lock_sem = Arc::clone(process_inner.semaphore_list[sem_id].as_ref().unwrap());
+    let is_enabled_detection = process_inner.enable_deadlock_detection;
     drop(process_inner);
-    sem.down();
+    drop(process);
+    if is_enabled_detection{
+        let current_task = current_task().unwrap();
+        let process = current_process();
+        let mut inner = process.inner_exclusive_access();
+        let sems = &mut inner.semaphore_list;
+        let locked_inner = lock_sem.inner.exclusive_access();
+        for (index,sem) in sems.iter_mut().enumerate(){
+            if sem.is_some(){
+                let sem = sem.as_mut().unwrap();
+                if index == sem_id{
+                    continue;
+                }
+                let inner = sem.inner.exclusive_access();
+                // 遍历除了将要下降的信号量之外的所有信号量的所有拥有者
+                let mut need_continue = true;
+                for task in inner.owned_queue.iter(){
+                    //去除不包含自己的信号量
+                    if Arc::ptr_eq(task, &current_task){
+                        need_continue = false;
+                    }
+                }
+                if need_continue{
+                    continue;
+                }
+                // 去除没锁住的信号量，
+                if inner.count >=0 {
+                    continue;
+                }
+                for task in inner.owned_queue.iter(){
+                    for owned_task in locked_inner.owned_queue.iter(){
+                        if Arc::ptr_eq(owned_task, task){
+                            return -0xdead;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    lock_sem.down();
     0
 }
 /// condvar create syscall
@@ -245,7 +291,10 @@ pub fn sys_condvar_wait(condvar_id: usize, mutex_id: usize) -> isize {
 /// enable deadlock detection syscall
 ///
 /// YOUR JOB: Implement deadlock detection, but might not all in this syscall
-pub fn sys_enable_deadlock_detect(_enabled: usize) -> isize {
-    trace!("kernel: sys_enable_deadlock_detect NOT IMPLEMENTED");
-    -1
+pub fn sys_enable_deadlock_detect(enabled: usize) -> isize {
+    trace!("kernel: sys_enable_deadlock_detect");
+    let current_process = current_process();
+    let mut lock = current_process.inner_exclusive_access();
+    lock.enable_deadlock_detection = enabled != 0;
+    0
 }

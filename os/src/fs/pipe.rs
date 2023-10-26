@@ -176,4 +176,8 @@ impl File for Pipe {
             }
         }
     }
+
+    fn state(&self) -> Option<super::Stat> {
+        None
+    }
 }

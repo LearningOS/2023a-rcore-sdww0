@@ -13,6 +13,7 @@ pub struct Semaphore {
 pub struct SemaphoreInner {
     pub count: isize,
     pub wait_queue: VecDeque<Arc<TaskControlBlock>>,
+    pub owned_queue: VecDeque<Arc<TaskControlBlock>>,
 }
 
 impl Semaphore {
@@ -24,6 +25,7 @@ impl Semaphore {
                 UPSafeCell::new(SemaphoreInner {
                     count: res_count as isize,
                     wait_queue: VecDeque::new(),
+                    owned_queue: VecDeque::new(),
                 })
             },
         }
@@ -34,6 +36,9 @@ impl Semaphore {
         trace!("kernel: Semaphore::up");
         let mut inner = self.inner.exclusive_access();
         inner.count += 1;
+        if let Some(task) = current_task(){
+            inner.owned_queue.push_back(task);
+        }
         if inner.count <= 0 {
             if let Some(task) = inner.wait_queue.pop_front() {
                 wakeup_task(task);
@@ -46,6 +51,7 @@ impl Semaphore {
         trace!("kernel: Semaphore::down");
         let mut inner = self.inner.exclusive_access();
         inner.count -= 1;
+        inner.owned_queue.push_back(current_task().unwrap());
         if inner.count < 0 {
             inner.wait_queue.push_back(current_task().unwrap());
             drop(inner);

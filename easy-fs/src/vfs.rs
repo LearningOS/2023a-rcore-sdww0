@@ -197,4 +197,94 @@ impl Inode {
         });
         block_cache_sync_all();
     }
+    
+    pub fn file_type(&self) -> DiskInodeType {
+        self.read_disk_inode(|inode| inode.type_)
+    }
+
+    /// 根据目录下的文件名与链接到的inode创建硬链接
+    pub fn linkat(&self, new_file_name: &str, link_inode_name: &str) -> Result<Arc<Inode>, ()> {
+        let inode = self.find(link_inode_name).ok_or(())?;
+        if self.find(new_file_name).is_some() {
+            return Err(());
+        }
+        let mut fs = self.fs.lock();
+        let new_inode = Inode {
+            block_id: inode.block_id,
+            block_offset: inode.block_offset,
+            fs: inode.fs.clone(),
+            block_device: inode.block_device.clone(),
+        };
+        self.modify_disk_inode(|root_inode| {
+            // append file in the dirent
+            let file_count = (root_inode.size as usize) / DIRENT_SZ;
+            let new_size = (file_count + 1) * DIRENT_SZ;
+            // increase size
+            self.increase_size(new_size as u32, root_inode, &mut fs);
+            // write dirent
+            let dirent = DirEntry::new(
+                new_file_name,
+                fs.get_inode_id(new_inode.block_id as u32, new_inode.block_offset),
+            );
+            root_inode.write_at(
+                file_count * DIRENT_SZ,
+                dirent.as_bytes(),
+                &self.block_device,
+            );
+        });
+        block_cache_sync_all();
+        inode.modify_disk_inode(|inode1| {
+            inode1.links_count += 1;
+        });
+        Ok(Arc::new(new_inode))
+    }
+
+    pub fn unlink(&self, name: &str) -> Result<(), ()> {
+        let inode = self.find(name).ok_or(())?;
+        let mut fs = self.fs.lock();
+        inode.modify_disk_inode(|disk_inode| {
+            disk_inode.links_count -= 1;
+            if disk_inode.links_count == 0 {
+                let size = disk_inode.size;
+                let data_blocks_dealloc = disk_inode.clear_size(&self.block_device);
+                assert!(data_blocks_dealloc.len() == DiskInode::total_blocks(size) as usize);
+                for data_block in data_blocks_dealloc.into_iter() {
+                    fs.dealloc_data(data_block);
+                }
+            }
+        });
+        // 清空DirEntry
+        self.modify_disk_inode(|disk_inode| {
+            // assert it is a directory
+            assert!(disk_inode.is_dir());
+            let file_count = (disk_inode.size as usize) / DIRENT_SZ;
+            let mut dirent = DirEntry::empty();
+            for i in 0..file_count {
+                assert_eq!(
+                    disk_inode.read_at(DIRENT_SZ * i, dirent.as_bytes_mut(), &self.block_device,),
+                    DIRENT_SZ,
+                );
+                if dirent.name() == name {
+                    disk_inode.write_at(
+                        DIRENT_SZ * i,
+                        DirEntry::empty().as_bytes(),
+                        &self.block_device,
+                    );
+                }
+            }
+        });
+
+        block_cache_sync_all();
+        Ok(())
+    }
+
+    pub fn block_id(&self) -> usize {
+        self.fs
+            .lock()
+            .get_inode_id(self.block_id as u32, self.block_offset) as usize
+    }
+
+    pub fn link(&self) -> u32 {
+        self.read_disk_inode(|inode| inode.links_count)
+    }
 }
